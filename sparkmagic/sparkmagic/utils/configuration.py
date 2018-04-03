@@ -7,6 +7,10 @@ from hdijupyterutils.utils import join_paths
 from hdijupyterutils.configuration import override as _override
 from hdijupyterutils.configuration import override_all as _override_all
 from hdijupyterutils.configuration import with_override
+from Crypto.Cipher import PKCS1_v1_5
+from Crypto.PublicKey import RSA
+from Crypto.Hash import SHA
+from Crypto import Random
 
 from .constants import HOME_PATH, CONFIG_FILE, MAGICS_LOGGER_NAME, LIVY_KIND_PARAM, \
     LANG_SCALA, LANG_PYTHON, LANG_PYTHON3, LANG_R, \
@@ -18,7 +22,7 @@ import sparkmagic.utils.constants as constants
 d = {}
 path = join_paths(HOME_PATH, CONFIG_FILE)
 
-    
+
 def override(config, value):
     _override(d, path, config, value)
 
@@ -48,13 +52,13 @@ def get_livy_kind(language):
 def get_auth_value(username, password):
     if username == '' and password == '':
         return constants.NO_AUTH
-    
+
     return constants.AUTH_BASIC
 
 
 # Configs
 
- 
+
 def get_session_properties(language):
     properties = copy.deepcopy(session_configs())
     properties[LIVY_KIND_PARAM] = get_livy_kind(language)
@@ -69,8 +73,8 @@ def session_configs():
 @_with_override
 def kernel_python_credentials():
     return {u'username': u'', u'base64_password': u'', u'url': u'http://localhost:8998', u'auth': constants.NO_AUTH}
-    
-    
+
+
 def base64_kernel_python_credentials():
     return _credentials_override(kernel_python_credentials)
 
@@ -90,7 +94,7 @@ def kernel_scala_credentials():
     return {u'username': u'', u'base64_password': u'', u'url': u'http://localhost:8998', u'auth': constants.NO_AUTH}
 
 
-def base64_kernel_scala_credentials():        
+def base64_kernel_scala_credentials():
     return _credentials_override(kernel_scala_credentials)
 
 @_with_override
@@ -198,7 +202,7 @@ def pyspark_dataframe_encoding():
 @_with_override
 def heartbeat_refresh_seconds():
     return 30
-    
+
 
 @_with_override
 def heartbeat_retry_seconds():
@@ -236,22 +240,43 @@ def configurable_retry_policy_max_retries():
     # Plus 15 seconds more wanted, that's 3 more 5 second retries.
     return 8
 
+@_with_override
+def rsa_file():
+    return u"example.key"
+
 
 def _credentials_override(f):
     """Provides special handling for credentials. It still calls _override().
     If 'base64_password' in config is set, it will base64 decode it and returned in return value's 'password' field.
-    If 'base64_password' is not set, it will fallback to 'password' in config.
+    If 'rsa_password' in config is set, it will rsa decode it and returned in return value's 'password' field.
+    If 'base64_password' or 'rsa_password' is not set, it will fallback to 'password' in config.
     """
     credentials = f()
-    base64_decoded_credentials = {k: credentials.get(k) for k in ('username', 'password', 'url', 'auth')}
+    rsa = rsa_file()
+    decoded_credentials = {k: credentials.get(k) for k in ('username', 'password', 'url', 'auth')}
     base64_password = credentials.get('base64_password')
+    rsa_password = credentials.get('rsa_password')
+    if rsa_password is not None:
+        try:
+            b = bytes(base64_password,'utf-8')
+            text = base64.decodestring(b)
+            f = open(rsa,'r')
+            pri_key = RSA.importKey(f.read())
+            cipher = PKCS1_v1_5.new(pri_key)
+            dsize = SHA.digest_size
+            sentinel = Random.new().read(15+dsize)
+            decoded_credentials['password'] = cipher.decrypt(text,sentinel)
+        except Exception:
+            exception_type, exception, traceback = sys.exc_info()
+            msg = "ras_password for %s contains invalid rsa string: %s %s" % (f.__name__, exception_type, exception)
+            raise BadUserConfigurationException(msg)
     if base64_password is not None:
         try:
-            base64_decoded_credentials['password'] = base64.b64decode(base64_password).decode()
+            decoded_credentials['password'] = base64.b64decode(base64_password).decode()
         except Exception:
             exception_type, exception, traceback = sys.exc_info()
             msg = "base64_password for %s contains invalid base64 string: %s %s" % (f.__name__, exception_type, exception)
             raise BadUserConfigurationException(msg)
-    if base64_decoded_credentials['auth'] is None:
-        base64_decoded_credentials['auth'] = get_auth_value(base64_decoded_credentials['username'], base64_decoded_credentials['password'])
-    return base64_decoded_credentials
+    if decoded_credentials['auth'] is None:
+        decoded_credentials['auth'] = get_auth_value(decoded_credentials['username'], decoded_credentials['password'])
+    return decoded_credentials
