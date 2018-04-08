@@ -258,7 +258,7 @@ def _credentials_override(f):
     rsa_password = credentials.get('rsa_password')
     if rsa_password is not None:
         try:
-            b = bytes(base64_password,'utf-8')
+            b = bytes(rsa_password,'utf-8')
             text = base64.decodestring(b)
             f = open(rsa,'r')
             pri_key = RSA.importKey(f.read())
