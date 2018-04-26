@@ -256,6 +256,7 @@ def _credentials_override(f):
     decoded_credentials = {k: credentials.get(k) for k in ('username', 'password', 'url', 'auth')}
     base64_password = credentials.get('base64_password')
     rsa_password = credentials.get('rsa_password')
+    rsa_username = credentials.get('rsa_username')
     if rsa_password is not None:
         try:
             b = bytes(rsa_password,'utf-8')
@@ -270,6 +271,22 @@ def _credentials_override(f):
             exception_type, exception, traceback = sys.exc_info()
             msg = "ras_password for %s contains invalid rsa string: %s %s" % (f.__name__, exception_type, exception)
             raise BadUserConfigurationException(msg)
+
+    if rsa_username is not None:
+        try:
+            b = bytes(rsa_username,'utf-8')
+            text = base64.decodestring(b)
+            f = open(rsa,'r')
+            pri_key = RSA.importKey(f.read())
+            cipher = PKCS1_v1_5.new(pri_key)
+            dsize = SHA.digest_size
+            sentinel = Random.new().read(15+dsize)
+            decoded_credentials['username'] = cipher.decrypt(text,sentinel)
+        except Exception:
+            exception_type, exception, traceback = sys.exc_info()
+            msg = "ras_username for %s contains invalid rsa string: %s %s" % (f.__name__, exception_type, exception)
+            raise BadUserConfigurationException(msg)
+            
     if base64_password is not None:
         try:
             decoded_credentials['password'] = base64.b64decode(base64_password).decode()
